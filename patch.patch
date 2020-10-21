@@ -1,0 +1,690 @@
+From 11476bc44e730c89d3284f7d40ac4e0833c19b83 Mon Sep 17 00:00:00 2001
+From: Rashed Abdel-Tawab <rashed@linux.com>
+Date: Mon, 13 Aug 2018 11:03:48 -0700
+Subject: [PATCH 01/21] soong: Add ANIOSP_VERSION to dumpvars
+
+Change-Id: I24b29442f041aec451a173db404f542060ac67d2
+---
+ ui/build/dumpvars.go | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ui/build/dumpvars.go b/ui/build/dumpvars.go
+index 54aeda082..656f58740 100644
+--- a/ui/build/dumpvars.go
++++ b/ui/build/dumpvars.go
+@@ -139,6 +139,7 @@ func dumpMakeVars(ctx Context, config Config, goals, vars []string, write_soong_
+ var BannerVars = []string{
+ 	"PLATFORM_VERSION_CODENAME",
+ 	"PLATFORM_VERSION",
++	"ANIOSP_VERSION",
+ 	"TARGET_PRODUCT",
+ 	"TARGET_BUILD_VARIANT",
+ 	"TARGET_BUILD_TYPE",
+-- 
+2.37.2
+
+
+From 3431bddb7bbe633eae622c606f4931d3c7a8580f Mon Sep 17 00:00:00 2001
+From: Abhisek Devkota <ciwrl@lineageos.org>
+Date: Wed, 8 Feb 2017 12:06:13 -0800
+Subject: [PATCH 02/21] Add dumpvars for WITH_SU and WITH_GMS
+
+ -Allow folks to see easily if the term session they are in has
+   WITH_SU set to true
+ -Also add a dumpvar rule for WITH_GMS for those that have it
+
+Change-Id: Ib310d0016bb9eb16960f794720321b706b6fd8b0
+---
+ ui/build/dumpvars.go | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/ui/build/dumpvars.go b/ui/build/dumpvars.go
+index 656f58740..fade89683 100644
+--- a/ui/build/dumpvars.go
++++ b/ui/build/dumpvars.go
+@@ -165,6 +165,8 @@ var BannerVars = []string{
+ 	"PRODUCT_SOONG_NAMESPACES",
+ 	"SOONG_SDK_SNAPSHOT_PREFER",
+ 	"SOONG_SDK_SNAPSHOT_VERSION",
++	"WITH_SU",
++	"WITH_GMS",
+ }
+ 
+ func Banner(make_vars map[string]string) string {
+-- 
+2.37.2
+
+
+From 8d34019bce69264c83556257441ede5eb9643a02 Mon Sep 17 00:00:00 2001
+From: Julian Veit <claymore1298@gmail.com>
+Date: Tue, 4 May 2021 07:57:50 +0200
+Subject: [PATCH 03/21] cleanbuild: add *.zip.sha256sum to installclean_files
+
+Change-Id: I91f92349423eeb99e7e4521f6239baabe8b1314c
+---
+ ui/build/cleanbuild.go | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ui/build/cleanbuild.go b/ui/build/cleanbuild.go
+index 19b569069..c280d739e 100644
+--- a/ui/build/cleanbuild.go
++++ b/ui/build/cleanbuild.go
+@@ -113,6 +113,7 @@ func installClean(ctx Context, config Config) {
+ 		hostCommonOut("obj/PACKAGING"),
+ 		productOut("*.img"),
+ 		productOut("*.zip"),
++		productOut("*.zip.sha256sum"),
+ 		productOut("android-info.txt"),
+ 		productOut("misc_info.txt"),
+ 		productOut("apex"),
+-- 
+2.37.2
+
+
+From ceda9d1445eb63eef97346efbb7f0e596d990e5a Mon Sep 17 00:00:00 2001
+From: Sam Mortimer <sam@mortimer.me.uk>
+Date: Thu, 5 Sep 2019 15:16:13 -0700
+Subject: [PATCH 07/21] soong: Add PathForSourceRelaxed
+
+Used by vendor/aniosp generated kernel header module.
+
+Partial pick from:
+Author: Sam Mortimer <sam@mortimer.me.uk>
+Date:   Fri Aug 17 11:25:08 2018 -0700
+    soong: Add java sources overlay support
+    Change-Id: I94143febb0a8afa6a165364d36a40d5120a4e7bc
+
+Change-Id: I415af71458f2a7be8e256cb3c548994f09c5bebf
+---
+ android/paths.go | 50 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/android/paths.go b/android/paths.go
+index fb751175e..232a4a97a 100644
+--- a/android/paths.go
++++ b/android/paths.go
+@@ -980,6 +980,31 @@ func pathForSource(ctx PathContext, pathComponents ...string) (SourcePath, error
+ 	return ret, nil
+ }
+ 
++// pathForSourceRelaxed creates a SourcePath from pathComponents, but does not check that it exists.
++// It differs from pathForSource in that the path is allowed to exist outside of the PathContext.
++func pathForSourceRelaxed(ctx PathContext, pathComponents ...string) (SourcePath, error) {
++	p := filepath.Join(pathComponents...)
++	ret := SourcePath{basePath{p, ""}, ctx.Config().srcDir}
++
++	abs, err := filepath.Abs(ret.String())
++	if err != nil {
++		return ret, err
++	}
++	buildroot, err := filepath.Abs(ctx.Config().buildDir)
++	if err != nil {
++		return ret, err
++	}
++	if strings.HasPrefix(abs, buildroot) {
++		return ret, fmt.Errorf("source path %s is in output", abs)
++	}
++
++	if pathtools.IsGlob(ret.String()) {
++		return ret, fmt.Errorf("path may not contain a glob: %s", ret.String())
++	}
++
++	return ret, nil
++}
++
+ // existsWithDependencies returns true if the path exists, and adds appropriate dependencies to rerun if the
+ // path does not exist.
+ func existsWithDependencies(ctx PathContext, path SourcePath) (exists bool, err error) {
+@@ -1034,6 +1059,31 @@ func PathForSource(ctx PathContext, pathComponents ...string) SourcePath {
+ 	return path
+ }
+ 
++// PathForSourceRelaxed joins the provided path components.  Unlike PathForSource,
++// the result is allowed to exist outside of the source dir.
++// On error, it will return a usable, but invalid SourcePath, and report a ModuleError.
++func PathForSourceRelaxed(ctx PathContext, pathComponents ...string) SourcePath {
++	path, err := pathForSourceRelaxed(ctx, pathComponents...)
++	if err != nil {
++		reportPathError(ctx, err)
++	}
++
++	if modCtx, ok := ctx.(ModuleContext); ok && ctx.Config().AllowMissingDependencies() {
++		exists, err := existsWithDependencies(ctx, path)
++		if err != nil {
++			reportPathError(ctx, err)
++		}
++		if !exists {
++			modCtx.AddMissingDependencies([]string{path.String()})
++		}
++	} else if exists, _, err := ctx.Config().fs.Exists(path.String()); err != nil {
++		ReportPathErrorf(ctx, "%s: %s", path, err.Error())
++	} else if !exists {
++		ReportPathErrorf(ctx, "source path %s does not exist", path)
++	}
++	return path
++}
++
+ // ExistentPathForSource returns an OptionalPath with the SourcePath, rooted from SrcDir, *not*
+ // rooted from the module's local source directory, if the path exists, or an empty OptionalPath if
+ // it doesn't exist. Dependencies are added so that the ninja file will be regenerated if the state
+-- 
+2.37.2
+
+
+From 3ebae0b9042bf09ae0ad55bccef6e7016f970c1d Mon Sep 17 00:00:00 2001
+From: LuK1337 <priv.luk@gmail.com>
+Date: Fri, 13 Nov 2020 15:11:27 +0100
+Subject: [PATCH 08/21] cleanbuild: Add `install` to installclean files
+
+Change-Id: Ib46d9638a2b3648d5e2ade1dfa864bc4e2ae695c
+---
+ ui/build/cleanbuild.go | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ui/build/cleanbuild.go b/ui/build/cleanbuild.go
+index c280d739e..15a5e95bb 100644
+--- a/ui/build/cleanbuild.go
++++ b/ui/build/cleanbuild.go
+@@ -146,7 +146,8 @@ func installClean(ctx Context, config Config) {
+ 		productOut("odm_dlkm"),
+ 		productOut("sysloader"),
+ 		productOut("testcases"),
+-		productOut("symbols"))
++		productOut("symbols"),
++		productOut("install"))
+ }
+ 
+ // Since products and build variants (unfortunately) shared the same
+-- 
+2.37.2
+
+
+From d411ce3e2e07120f0c0b0605b8940cb6d64bfdd2 Mon Sep 17 00:00:00 2001
+From: Jan Altensen <info@stricted.net>
+Date: Thu, 10 Sep 2020 15:21:40 +0200
+Subject: [PATCH 09/21] soong: allow overriding header files
+
+Includes:
+
+  Author: Jan Altensen <info@stricted.net>
+  Date:   Sat Aug 7 19:41:59 2021 +0200
+
+    soong: move header override to compiler.go
+
+     * library.go only covers libraries
+
+    Change-Id: I3374999d6b364dd1bbc2060996964ee7b04493e7
+
+Change-Id: Ia9d2210605c5927b529fbe9485b0e5abd079f487
+---
+ android/config.go   |  4 ++++
+ android/variable.go |  2 ++
+ cc/compiler.go      | 10 ++++++++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/android/config.go b/android/config.go
+index 24fc522df..48700fb21 100644
+--- a/android/config.go
++++ b/android/config.go
+@@ -1120,6 +1120,10 @@ func (c *deviceConfig) DeviceKernelHeaderDirs() []string {
+ 	return c.config.productVariables.DeviceKernelHeaders
+ }
+ 
++func (c *deviceConfig) TargetSpecificHeaderPath() string {
++	return String(c.config.productVariables.TargetSpecificHeaderPath)
++}
++
+ func (c *deviceConfig) SamplingPGO() bool {
+ 	return Bool(c.config.productVariables.SamplingPGO)
+ }
+diff --git a/android/variable.go b/android/variable.go
+index 741d9aed5..adcb5842d 100644
+--- a/android/variable.go
++++ b/android/variable.go
+@@ -302,6 +302,8 @@ type productVariables struct {
+ 
+ 	DeviceKernelHeaders []string `json:",omitempty"`
+ 
++	TargetSpecificHeaderPath *string `json:",omitempty"`
++
+ 	ExtraVndkVersions []string `json:",omitempty"`
+ 
+ 	NamespacesToExport []string `json:",omitempty"`
+diff --git a/cc/compiler.go b/cc/compiler.go
+index 78a5a5da3..a449d2265 100644
+--- a/cc/compiler.go
++++ b/cc/compiler.go
+@@ -299,6 +299,16 @@ func (compiler *baseCompiler) compilerFlags(ctx ModuleContext, flags Flags, deps
+ 	tc := ctx.toolchain()
+ 	modulePath := android.PathForModuleSrc(ctx).String()
+ 
++	additionalIncludeDirs := ctx.DeviceConfig().TargetSpecificHeaderPath()
++	if len(additionalIncludeDirs) > 0 {
++		// devices can have multiple paths in TARGET_SPECIFIC_HEADER_PATH
++		// add -I in front of all of them
++		if (strings.Contains(additionalIncludeDirs, " ")) {
++			additionalIncludeDirs = strings.ReplaceAll(additionalIncludeDirs, " ", " -I")
++		}
++		flags.Local.CommonFlags = append(flags.Local.CommonFlags, "-I" + additionalIncludeDirs)
++	}
++
+ 	compiler.srcsBeforeGen = android.PathsForModuleSrcExcludes(ctx, compiler.Properties.Srcs, compiler.Properties.Exclude_srcs)
+ 	compiler.srcsBeforeGen = append(compiler.srcsBeforeGen, deps.GeneratedSources...)
+ 
+-- 
+2.37.2
+
+
+From 3b766cfe534d888212de22c07f28b55f8eea9d38 Mon Sep 17 00:00:00 2001
+From: Chirayu Desai <chirayudesai1@gmail.com>
+Date: Sat, 30 Jan 2021 20:08:32 +0530
+Subject: [PATCH 10/21] Replace device_kernel_headers with
+ generated_kernel_headers
+
+* For inline kernel building
+* Avoids having to make edits to multiple repos, even
+  if it's a quick replacement
+
+Change-Id: I01d4a9b3e24315731efbc8d16882818d20e38e89
+---
+ cc/cc.go | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/cc/cc.go b/cc/cc.go
+index c62fd6c8f..fc6728f02 100644
+--- a/cc/cc.go
++++ b/cc/cc.go
+@@ -2092,6 +2092,21 @@ func (c *Module) DepsMutator(actx android.BottomUpMutatorContext) {
+ 			return nonvariantLibs, variantLibs
+ 		}
+ 
++		rewriteHeaderLibs := func(list []string) (newHeaderLibs []string) {
++			newHeaderLibs = []string{}
++			for _, entry := range list {
++				// Replace device_kernel_headers with generated_kernel_headers
++				// for inline kernel building
++				if entry == "device_kernel_headers" {
++					newHeaderLibs = append(newHeaderLibs, "generated_kernel_headers")
++					continue
++				}
++				newHeaderLibs = append(newHeaderLibs, entry)
++			}
++			return newHeaderLibs
++		}
++		deps.HeaderLibs = rewriteHeaderLibs(deps.HeaderLibs)
++
+ 		deps.SharedLibs, variantNdkLibs = rewriteLibs(deps.SharedLibs)
+ 		deps.LateSharedLibs, variantLateNdkLibs = rewriteLibs(deps.LateSharedLibs)
+ 		deps.ReexportSharedLibHeaders, _ = rewriteLibs(deps.ReexportSharedLibHeaders)
+-- 
+2.37.2
+
+
+From 2b5d1462d484db72a05c9f9940f89c66a7185c25 Mon Sep 17 00:00:00 2001
+From: Scott Lobdell <slobdell@google.com>
+Date: Fri, 2 Jul 2021 21:53:30 +0000
+Subject: [PATCH 11/21] Add qcom.fmradio and org.codeaurora.internal to
+ allowlist
+
+B58: Add org.codeaurora.ims to the list.
+
+Bug: 192690464
+Change-Id: I0837873f5bf4e3a8402d70e720d2b55ee4e0a991
+(cherry picked from commit ef25c8777180f88650dad8bd2499e8c8c9d174b7)
+---
+ scripts/check_boot_jars/package_allowed_list.txt | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/scripts/check_boot_jars/package_allowed_list.txt b/scripts/check_boot_jars/package_allowed_list.txt
+index 18ab427b5..a2b0669ff 100644
+--- a/scripts/check_boot_jars/package_allowed_list.txt
++++ b/scripts/check_boot_jars/package_allowed_list.txt
+@@ -246,3 +246,12 @@ com\.google\.i18n\.phonenumbers
+ # Packages used for Android in Chrome OS
+ org\.chromium\.arc
+ org\.chromium\.arc\..*
++
++# QC adds
++com.qualcomm.qti
++com.quicinc.tcmiface
++com.qualcomm.wfd
++com.qualcomm.wfd.service
++org.codeaurora.ims
++org.codeaurora.internal
++qcom.fmradio
+-- 
+2.37.2
+
+
+From e8eeeb5a8e8d4bb380a4da1866a3f9a39f653c3d Mon Sep 17 00:00:00 2001
+From: Nolen Johnson <johnsonnolen@gmail.com>
+Date: Thu, 9 Dec 2021 18:29:31 -0500
+Subject: [PATCH 12/21] Replace qti_kernel_headers with
+ generated_kernel_headers
+
+* Further avoids edits in CAF repos.
+
+Change-Id: I99f9773e3132de7816c921c9d6b09e3e62b68265
+---
+ cc/cc.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/cc/cc.go b/cc/cc.go
+index fc6728f02..619acf96b 100644
+--- a/cc/cc.go
++++ b/cc/cc.go
+@@ -2097,7 +2097,7 @@ func (c *Module) DepsMutator(actx android.BottomUpMutatorContext) {
+ 			for _, entry := range list {
+ 				// Replace device_kernel_headers with generated_kernel_headers
+ 				// for inline kernel building
+-				if entry == "device_kernel_headers" {
++				if entry == "device_kernel_headers" || entry == "qti_kernel_headers" {
+ 					newHeaderLibs = append(newHeaderLibs, "generated_kernel_headers")
+ 					continue
+ 				}
+-- 
+2.37.2
+
+
+From bac7e342d3e9b107ac60de91d8303d5cec336c52 Mon Sep 17 00:00:00 2001
+From: Quallenauge <Hamsi2k@freenet.de>
+Date: Wed, 21 Oct 2020 21:19:01 +0200
+Subject: [PATCH 13/21] Add ability to enable scudo-free 32-bit libc variant.
+
+The default value is set to enable scudo with the
+32-bit libc variant.
+
+Change-Id: I9205da12eceadfe6245763a49c7208d30b82ad99
+---
+ android/variable.go | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/android/variable.go b/android/variable.go
+index adcb5842d..541c43c7f 100644
+--- a/android/variable.go
++++ b/android/variable.go
+@@ -55,6 +55,13 @@ type variableProperties struct {
+ 			Exclude_static_libs []string `android:"arch_variant"`
+ 		} `android:"arch_variant"`
+ 
++		Malloc_not_svelte_libc32 struct {
++			Cflags              []string `android:"arch_variant"`
++			Shared_libs         []string `android:"arch_variant"`
++			Whole_static_libs   []string `android:"arch_variant"`
++			Exclude_static_libs []string `android:"arch_variant"`
++		} `android:"arch_variant"`
++
+ 		Malloc_zero_contents struct {
+ 			Cflags []string `android:"arch_variant"`
+ 		} `android:"arch_variant"`
+@@ -228,6 +235,7 @@ type productVariables struct {
+ 	Always_use_prebuilt_sdks     *bool `json:",omitempty"`
+ 	Skip_boot_jars_check         *bool `json:",omitempty"`
+ 	Malloc_not_svelte            *bool `json:",omitempty"`
++	Malloc_not_svelte_libc32         *bool `json:",omitempty"`
+ 	Malloc_zero_contents         *bool `json:",omitempty"`
+ 	Malloc_pattern_fill_contents *bool `json:",omitempty"`
+ 	Safestack                    *bool `json:",omitempty"`
+@@ -439,6 +447,7 @@ func (v *productVariables) SetDefaultConfig() {
+ 		AAPTPrebuiltDPI:     []string{"xhdpi", "xxhdpi"},
+ 
+ 		Malloc_not_svelte:            boolPtr(true),
++		Malloc_not_svelte_libc32:     boolPtr(true),
+ 		Malloc_zero_contents:         boolPtr(true),
+ 		Malloc_pattern_fill_contents: boolPtr(false),
+ 		Safestack:                    boolPtr(false),
+-- 
+2.37.2
+
+
+From 8a561b3344c95653bc4069682b6ba9a736a8aaae Mon Sep 17 00:00:00 2001
+From: LuK1337 <priv.luk@gmail.com>
+Date: Sun, 16 Jan 2022 20:44:58 +0100
+Subject: [PATCH 14/21] Add exported-to-kati namespaces to root namespace
+
+This lets us use boot jar modules that are hidden behind
+soong_namespace.
+
+Change-Id: If0068387efdeca5458b5b97ce6b993b10a268bd2
+---
+ android/namespace.go | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/android/namespace.go b/android/namespace.go
+index d137636e2..ccda7c45a 100644
+--- a/android/namespace.go
++++ b/android/namespace.go
+@@ -132,6 +132,9 @@ func (r *NameResolver) addNamespace(namespace *Namespace) (err error) {
+ 			return fmt.Errorf("a namespace must be the first module in the file")
+ 		}
+ 	}
++	if (namespace.exportToKati) {
++		r.rootNamespace.visibleNamespaces = append(r.rootNamespace.visibleNamespaces, namespace)
++	}
+ 	r.sortedNamespaces.add(namespace)
+ 
+ 	r.namespacesByDir.Store(namespace.Path, namespace)
+-- 
+2.37.2
+
+
+From b5399f1757c585a88af421307d7b8b0adb614a3a Mon Sep 17 00:00:00 2001
+From: Michael Bestas <mkbestas@gmail.com>
+Date: Mon, 14 Oct 2019 21:55:42 +0300
+Subject: [PATCH 15/21] check_boot_jars: Add IFAA Manager to whitelist
+
+Fixes:
+Error: out/target/common/obj/JAVA_LIBRARIES/org.ifaa.android.manager_intermediates/classes.jar
+  contains class file org/ifaa/android/manager/IFAAManager.class,
+  whose package name org.ifaa.android.manager is not in the whitelist
+  build/make/core/tasks/check_boot_jars/package_whitelist.txt
+  of packages allowed on the bootclasspath.
+
+(The error only pops up when using "make dist")
+
+Change-Id: Ib17b935ca39de7f6e8e6b68aa81fbebe1d5a30a5
+---
+ scripts/check_boot_jars/package_allowed_list.txt | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/scripts/check_boot_jars/package_allowed_list.txt b/scripts/check_boot_jars/package_allowed_list.txt
+index a2b0669ff..de589eb78 100644
+--- a/scripts/check_boot_jars/package_allowed_list.txt
++++ b/scripts/check_boot_jars/package_allowed_list.txt
+@@ -255,3 +255,7 @@ com.qualcomm.wfd.service
+ org.codeaurora.ims
+ org.codeaurora.internal
+ qcom.fmradio
++
++###################################################
++# IFAA Manager used for Alipay and/or WeChat payment
++org\.ifaa\.android\.manager.*
+-- 
+2.37.2
+
+
+From 815750db9659a0adeb5df2b98ddfbc78f02d6694 Mon Sep 17 00:00:00 2001
+From: Nolen Johnson <johnsonnolen@gmail.com>
+Date: Thu, 17 Feb 2022 13:25:13 -0500
+Subject: [PATCH 16/21] Be more explicit about GMS dumpvars
+
+* For most people and in most enviorments these will
+  never pop up, but given we now support GMS variants
+  and different build types we ought to tell the user
+  which one is in use.
+
+Change-Id: I7639f2e741d9b24e3719ef76d7d532c0155cd988
+---
+ ui/build/dumpvars.go | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ui/build/dumpvars.go b/ui/build/dumpvars.go
+index fade89683..1eb68021a 100644
+--- a/ui/build/dumpvars.go
++++ b/ui/build/dumpvars.go
+@@ -167,6 +167,10 @@ var BannerVars = []string{
+ 	"SOONG_SDK_SNAPSHOT_VERSION",
+ 	"WITH_SU",
+ 	"WITH_GMS",
++	"WITH_GMS_CAR",
++	"WITH_GMS_TV",
++	"GMS_MAKEFILE",
++	"MAINLINE_MODULES_MAKEFILE",
+ }
+ 
+ func Banner(make_vars map[string]string) string {
+-- 
+2.37.2
+
+
+From 1021c654129f0495f2689c00507fdd7b5cc627e3 Mon Sep 17 00:00:00 2001
+From: dianlujitao <dianlujitao@lineageos.org>
+Date: Sun, 20 Feb 2022 23:57:22 +0800
+Subject: [PATCH 17/21] Add Init_rc to Product_variables.Eng
+
+Change-Id: If490b64f3631ec0825ffa28964a3e65572a9bcb8
+---
+ android/variable.go | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/android/variable.go b/android/variable.go
+index 541c43c7f..f84ba82b3 100644
+--- a/android/variable.go
++++ b/android/variable.go
+@@ -117,6 +117,7 @@ type variableProperties struct {
+ 		Eng struct {
+ 			Cflags   []string
+ 			Cppflags []string
++			Init_rc  []string
+ 			Lto      struct {
+ 				Never *bool
+ 			}
+-- 
+2.37.2
+
+
+From c265d950f81ece2ace5bf6bdf4737a3b1ee8b36d Mon Sep 17 00:00:00 2001
+From: Jarl-Penguin <jarlpenguin@outlook.com>
+Date: Tue, 20 Jul 2021 15:31:28 +0300
+Subject: [PATCH 18/21] cleanbuild: Add `recovery_kernel` to installclean files
+
+Signed-off-by: Jarl-Penguin <jarlpenguin@outlook.com>
+Change-Id: I89b7093be92cb22a223033f9a7269624f7293c35
+---
+ ui/build/cleanbuild.go | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ui/build/cleanbuild.go b/ui/build/cleanbuild.go
+index 15a5e95bb..41ad0eb3a 100644
+--- a/ui/build/cleanbuild.go
++++ b/ui/build/cleanbuild.go
+@@ -119,6 +119,7 @@ func installClean(ctx Context, config Config) {
+ 		productOut("apex"),
+ 		productOut("kernel"),
+ 		productOut("kernel-*"),
++		productOut("recovery_kernel"),
+ 		productOut("data"),
+ 		productOut("skin"),
+ 		productOut("obj/NOTICE_FILES"),
+-- 
+2.37.2
+
+
+From 3280b37009ef08f7de28b75fcb952fbc12d3849b Mon Sep 17 00:00:00 2001
+From: LuK1337 <priv.luk@gmail.com>
+Date: Sat, 5 Mar 2022 14:20:46 +0100
+Subject: [PATCH 19/21] check_boot_jars: Add nvidia packages to whitelist
+
+Change-Id: I9958189f8baec057f65da692dd060682726125b4
+---
+ scripts/check_boot_jars/package_allowed_list.txt | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/scripts/check_boot_jars/package_allowed_list.txt b/scripts/check_boot_jars/package_allowed_list.txt
+index de589eb78..22703c7ee 100644
+--- a/scripts/check_boot_jars/package_allowed_list.txt
++++ b/scripts/check_boot_jars/package_allowed_list.txt
+@@ -247,6 +247,10 @@ com\.google\.i18n\.phonenumbers
+ org\.chromium\.arc
+ org\.chromium\.arc\..*
+ 
++# NV adds
++com\.nvidia
++com\.nvidia\..*
++
+ # QC adds
+ com.qualcomm.qti
+ com.quicinc.tcmiface
+-- 
+2.37.2
+
+
+From e44eda6578581752f1ea950613426aad077bdf91 Mon Sep 17 00:00:00 2001
+From: daniml3 <danimoral1001@gmail.com>
+Date: Mon, 11 Oct 2021 14:12:34 +0200
+Subject: [PATCH 20/21] sandbox_linux: set CCACHE_DIR as a writable path
+
+Fixes "Read-only file system" error when using ccache.
+
+NOTE: This is only required when both ccache exec and dir are on the
+same partition.
+
+Change-Id: I99afe644c8ee0e0b881c1643fef0cb31b83bcd17
+---
+ ui/build/sandbox_linux.go | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/ui/build/sandbox_linux.go b/ui/build/sandbox_linux.go
+index dab0e756b..c71b362ef 100644
+--- a/ui/build/sandbox_linux.go
++++ b/ui/build/sandbox_linux.go
+@@ -213,6 +213,13 @@ func (c *Cmd) wrapSandbox() {
+ 		sandboxArgs = append(sandboxArgs, "-N")
+ 	}
+ 
++	if ccacheExec := os.Getenv("CCACHE_EXEC"); ccacheExec != "" {
++		bytes, err := exec.Command(ccacheExec, "-k", "cache_dir").Output()
++		if err == nil {
++			sandboxArgs = append(sandboxArgs, "-B", strings.TrimSpace(string(bytes)))
++		}
++	}
++
+ 	// Stop nsjail from parsing arguments
+ 	sandboxArgs = append(sandboxArgs, "--")
+ 
+-- 
+2.37.2
+
+
+From f017a30c4630c6d498dd72eabfc992b397b6e96f Mon Sep 17 00:00:00 2001
+From: Bruno Martins <bgcngm@gmail.com>
+Date: Thu, 9 Jun 2022 21:14:18 +0100
+Subject: [PATCH 21/21] dumpvars: Replace ATV and Automotive vars
+
+There's no need anymore to export a var to explicitly opt for
+ATV or Automotive specific GMS. Instead, just show what type of
+product is set.
+
+Change-Id: I9e9035dc1655b6f118fd8562b60f9cfec5906806
+---
+ ui/build/dumpvars.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ui/build/dumpvars.go b/ui/build/dumpvars.go
+index 1eb68021a..b16c4c8cb 100644
+--- a/ui/build/dumpvars.go
++++ b/ui/build/dumpvars.go
+@@ -167,8 +167,8 @@ var BannerVars = []string{
+ 	"SOONG_SDK_SNAPSHOT_VERSION",
+ 	"WITH_SU",
+ 	"WITH_GMS",
+-	"WITH_GMS_CAR",
+-	"WITH_GMS_TV",
++	"PRODUCT_IS_ATV",
++	"PRODUCT_IS_AUTO",
+ 	"GMS_MAKEFILE",
+ 	"MAINLINE_MODULES_MAKEFILE",
+ }
+-- 
+2.37.2
+
