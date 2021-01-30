@@ -2223,9 +2223,59 @@ func (c *Module) DepsMutator(actx android.BottomUpMutatorContext) {
 	variantNdkLibs := []string{}
 	variantLateNdkLibs := []string{}
 	if ctx.Os() == android.Android {
-		deps.SharedLibs, variantNdkLibs = RewriteLibs(c, &snapshotInfo, actx, ctx.Config(), deps.SharedLibs)
-		deps.LateSharedLibs, variantLateNdkLibs = RewriteLibs(c, &snapshotInfo, actx, ctx.Config(), deps.LateSharedLibs)
-		deps.ReexportSharedLibHeaders, _ = RewriteLibs(c, &snapshotInfo, actx, ctx.Config(), deps.ReexportSharedLibHeaders)
+		// rewriteLibs takes a list of names of shared libraries and scans it for three types
+		// of names:
+		//
+		// 1. Name of an NDK library that refers to a prebuilt module.
+		//    For each of these, it adds the name of the prebuilt module (which will be in
+		//    prebuilts/ndk) to the list of nonvariant libs.
+		// 2. Name of an NDK library that refers to an ndk_library module.
+		//    For each of these, it adds the name of the ndk_library module to the list of
+		//    variant libs.
+		// 3. Anything else (so anything that isn't an NDK library).
+		//    It adds these to the nonvariantLibs list.
+		//
+		// The caller can then know to add the variantLibs dependencies differently from the
+		// nonvariantLibs
+
+		rewriteLibs := func(list []string) (nonvariantLibs []string, variantLibs []string) {
+			variantLibs = []string{}
+			nonvariantLibs = []string{}
+			for _, entry := range list {
+				// strip #version suffix out
+				name, _ := StubsLibNameAndVersion(entry)
+				if c.InRecovery() {
+					nonvariantLibs = append(nonvariantLibs, rewriteSnapshotLib(entry, getSnapshot().SharedLibs))
+				} else if ctx.useSdk() && inList(name, *getNDKKnownLibs(ctx.Config())) {
+					variantLibs = append(variantLibs, name+ndkLibrarySuffix)
+				} else if ctx.useVndk() {
+					nonvariantLibs = append(nonvariantLibs, rewriteSnapshotLib(entry, getSnapshot().SharedLibs))
+				} else {
+					// put name#version back
+					nonvariantLibs = append(nonvariantLibs, entry)
+				}
+			}
+			return nonvariantLibs, variantLibs
+		}
+
+		rewriteHeaderLibs := func(list []string) (newHeaderLibs []string) {
+			newHeaderLibs = []string{}
+			for _, entry := range list {
+				// Replace device_kernel_headers with generated_kernel_headers
+				// for inline kernel building
+				if entry == "device_kernel_headers" {
+					newHeaderLibs = append(newHeaderLibs, "generated_kernel_headers")
+					continue
+				}
+				newHeaderLibs = append(newHeaderLibs, entry)
+			}
+			return newHeaderLibs
+		}
+		deps.HeaderLibs = rewriteHeaderLibs(deps.HeaderLibs)
+
+		deps.SharedLibs, variantNdkLibs = rewriteLibs(deps.SharedLibs)
+		deps.LateSharedLibs, variantLateNdkLibs = rewriteLibs(deps.LateSharedLibs)
+		deps.ReexportSharedLibHeaders, _ = rewriteLibs(deps.ReexportSharedLibHeaders)
 
 		for idx, lib := range deps.RuntimeLibs {
 			deps.RuntimeLibs[idx] = RewriteSnapshotLib(lib, GetSnapshot(c, &snapshotInfo, actx).SharedLibs)
